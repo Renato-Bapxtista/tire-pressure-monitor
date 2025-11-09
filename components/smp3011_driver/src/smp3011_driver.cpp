@@ -140,9 +140,18 @@ uint32_t SMP3011Driver::combine_pressure_data_bytes(uint8_t msb_byte, uint8_t ls
     return combined_value >> 5; // Ajustar para 19 bits
 }
 
+float pressure_offset_ = 0.0f;
+
+bool SMP3011Driver::set_pressure_offset(float offset_kpa) {
+    pressure_offset_ = offset_kpa;
+    ESP_LOGI(TAG, "Offset de pressão configurado: %.2f kPa", offset_kpa);
+    return true;
+}
+
+
 float SMP3011Driver::convert_raw_pressure_to_kilopascal(uint32_t raw_pressure_value) {
-    // Converter valor bruto para kPa usando escala linear
     float pressure_kilopascal = minimum_measurement_pressure_ + (raw_pressure_value * pressure_scale_factor_);
+    pressure_kilopascal += pressure_offset_; // Aplicar offset
     
     // Garantir que esteja dentro da faixa configurada
     if (pressure_kilopascal < minimum_measurement_pressure_) {

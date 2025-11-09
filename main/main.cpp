@@ -65,7 +65,7 @@ extern "C" void app_main(void) {
             ESP_LOGE("MAIN", "Falha na inicialização do display OLED");
             // Continuar sem display
         }
-    } else {
+    } else {    
         ESP_LOGE("MAIN", "Falha crítica na inicialização do barramento I2C0 (display)");
     }
 

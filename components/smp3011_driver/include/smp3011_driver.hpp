@@ -16,6 +16,8 @@ private:
     I2CManager* i2c_manager_;
     uint8_t device_address_;
     bool sensor_initialized_;
+
+    bool set_pressure_offset(float offset_kpa);
     
     // Configurações de medição
     float minimum_measurement_pressure_;
@@ -32,7 +34,7 @@ private:
     
     static constexpr uint8_t COMMAND_START_MEASUREMENT = 0x01;
     static constexpr uint8_t CONTROL_REGISTER_DEFAULT = 0x14; // 12-bit resolution
-    static constexpr uint8_t CONFIG_REGISTER_DEFAULT = 0x00;  // Normal mode
+    static constexpr uint8_t CONFIG_REGISTER_DEFAULT = 0x00;  // Normal mode    
 
     esp_err_t configure_sensor_operation();
     esp_err_t verify_sensor_communication();
