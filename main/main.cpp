@@ -35,6 +35,40 @@ void scan_i2c_bus(I2CManager& i2c_bus, const char* bus_name) {
             bus_name, devices_found_count);
 }
 
+
+
+
+
+// Função para calibração interativa
+void calibrate_smp3011(SMP3011Driver& sensor) {
+    ESP_LOGI("CALIBRATE", "=== MODO CALIBRAÇÃO SMP3011 ===");
+    ESP_LOGI("CALIBRATE", "Esta função ajuda a calibrar o offset do sensor");
+    
+    float current_pressure;
+    uint32_t raw_value;
+    
+    // Fazer leitura atual
+    if (sensor.read_pressure_detailed(&current_pressure, &raw_value) == ESP_OK) {
+        ESP_LOGI("CALIBRATE", "Leitura atual: %.2f kPa (Raw: %lu)", current_pressure, raw_value);
+        
+        // Se a pressão estiver muito baixa, sugerir offset
+        if (current_pressure < 50.0f) {
+            float suggested_offset = 250.0f - current_pressure; // Target 250 kPa
+            ESP_LOGI("CALIBRATE", "Sugerindo offset: %.2f kPa", suggested_offset);
+            sensor.set_pressure_offset(suggested_offset);
+            
+            // Verificar nova leitura
+            sensor.read_pressure_detailed(&current_pressure, &raw_value);
+            ESP_LOGI("CALIBRATE", "Nova leitura com offset: %.2f kPa", current_pressure);
+        }
+    }
+}
+
+
+
+
+
+
 extern "C" void app_main(void) {
     // Inicializar NVS
     esp_err_t initialization_result = nvs_flash_init();
@@ -82,6 +116,38 @@ extern "C" void app_main(void) {
         // Scan I2C1 para sensores
         scan_i2c_bus(i2c1_bus, "I2C1 (Sensores)");
 
+
+
+        // Diagnóstico completo do sensor de pressão
+        ESP_LOGI("DIAGNOSTIC", "=== DIAGNÓSTICO COMPLETO DO SENSOR DE PRESSÃO ===");
+
+        // Testar endereços alternativos
+        ESP_LOGI("DIAGNOSTIC", "Testando endereços I2C alternativos...");
+        uint8_t alternative_addresses[] = {0x76, 0x77, 0x28, 0x29, 0x40, 0x41};
+        for (auto alt_addr : alternative_addresses) {
+            if (i2c1_bus.probe_device(alt_addr) == ESP_OK) {
+                ESP_LOGI("DIAGNOSTIC", "Dispositivo encontrado no endereço alternativo: 0x%02X", alt_addr);
+            }
+        }
+
+        // Inicializar sensor com diagnóstico detalhado
+        if (tire_pressure_sensor.initialize_sensor() == ESP_OK) {
+            ESP_LOGI("MAIN", "Sensor de pressão inicializado com sucesso");
+            
+            // Teste de leitura inicial
+            float test_pressure;
+            uint32_t raw_value;
+            if (tire_pressure_sensor.read_pressure_detailed(&test_pressure, &raw_value) == ESP_OK) {
+                ESP_LOGI("TEST", "Leitura inicial: %.2f kPa (raw: %lu)", test_pressure, raw_value);
+            }
+        } else {
+            ESP_LOGW("MAIN", "Sensor de pressão inicializado em modo fallback");
+        }
+
+
+
+
+
         // Inicializar sensor ambiental BMP280
         bool environmental_sensor_ready = false;
         if (environmental_sensor.initialize_sensor() == ESP_OK) {
@@ -97,6 +163,30 @@ extern "C" void app_main(void) {
         if (tire_pressure_sensor.initialize_sensor() == ESP_OK) {
             ESP_LOGI("MAIN", "Sensor de pressão SMP3011 inicializado com sucesso");
             tire_sensor_ready = true;
+
+            // Diagnóstico detalhado do SMP3011
+            ESP_LOGI("DIAGNOSTIC", "=== DIAGNÓSTICO SMP3011 ===");
+
+            // Escanear registros do sensor
+            tire_pressure_sensor.scan_sensor_registers();
+
+            // Fazer várias leituras de teste com detalhes
+            for (int i = 0; i < 5; i++) {
+                float test_pressure;
+                uint32_t raw_value;
+                esp_err_t result = tire_pressure_sensor.read_pressure_detailed(&test_pressure, &raw_value);
+                
+                if (result == ESP_OK) {
+                    ESP_LOGI("DIAGNOSTIC", "Teste %d: Bruto=%lu, Pressão=%.2f kPa", i+1, raw_value, test_pressure);
+                } else {
+                    ESP_LOGE("DIAGNOSTIC", "Teste %d falhou: %s", i+1, esp_err_to_name(result));
+                }
+                
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+
+
+
         } else {
             ESP_LOGE("MAIN", "Falha na inicialização do sensor de pressão SMP3011");
             status_display.display_error_message("Erro: Sensor SMP3011 falhou");

@@ -1,29 +1,61 @@
 #include "oled_display.hpp"
 #include "esp_log.h"
-#include "driver/i2c.h"
+#include <string.h>
 
 static const char *TAG = "OLEDDisplay";
 
-// Inicializar membro estático
-OLEDDisplay* OLEDDisplay::instance_ = nullptr;
+// Sequência de inicialização do SSD1306
+static const uint8_t INIT_COMMANDS[] = {
+    0xAE, // Display OFF
+    0x20, 0x00, // Memory addressing mode = horizontal
+    0x21, 0x00, 0x7F, // Column address range
+    0x22, 0x00, 0x07, // Page address range
+    0xA8, 0x3F, // Mux ratio
+    0xD3, 0x00, // Display offset
+    0x40, // Display start line
+    0xA1, // Segment remap
+    0xC8, // COM output scan direction
+    0xDA, 0x12, // COM pins hardware configuration
+    0x81, 0x7F, // Contrast control
+    0xA4, // Entire display ON
+    0xA6, // Normal display
+    0xD5, 0x80, // Oscillator frequency
+    0x8D, 0x14, // Enable charge pump
+    0xAF  // Display ON
+};
 
 OLEDDisplay::OLEDDisplay(I2CManager* i2c_manager, uint8_t device_address) 
-    : i2c_manager_(i2c_manager), device_address_(device_address), display_initialized_(false) {
-    
-    instance_ = this;
-    
-    // Configurar U8G2 para SSD1306 128x64 via I2C
-    u8g2_Setup_ssd1306_i2c_128x64_noname_f(&u8g2_display_, U8G2_R0, i2c_byte_callback, gpio_delay_callback);
-    
-    
-}
+    : i2c_manager_(i2c_manager), device_address_(device_address), display_initialized_(false) {}
 
 OLEDDisplay::~OLEDDisplay() {
     if (display_initialized_) {
-        u8g2_SetPowerSave(&u8g2_display_, 1); // Power save mode
+        send_command(0xAE); // Display OFF
         ESP_LOGI(TAG, "Display OLED finalizado");
     }
-    instance_ = nullptr;
+}
+
+esp_err_t OLEDDisplay::send_command(uint8_t command) {
+    uint8_t buffer[2] = {0x00, command}; // 0x00 = command mode
+    return i2c_manager_->write_register(device_address_, buffer[0], buffer[1]);
+}
+
+esp_err_t OLEDDisplay::send_data(const uint8_t* data, size_t length) {
+    esp_err_t result = ESP_OK;
+    for (size_t i = 0; i < length; i++) {
+        result = i2c_manager_->write_register(device_address_, 0x40, data[i]); // 0x40 = data mode
+        if (result != ESP_OK) break;
+    }
+    return result;
+}
+
+esp_err_t OLEDDisplay::send_command_sequence(const uint8_t* commands, size_t length) {
+    esp_err_t result = ESP_OK;
+    for (size_t i = 0; i < length; i++) {
+        result = send_command(commands[i]);
+        if (result != ESP_OK) break;
+        vTaskDelay(pdMS_TO_TICKS(1)); // Pequeno delay entre comandos
+    }
+    return result;
 }
 
 esp_err_t OLEDDisplay::initialize_display() {
@@ -36,210 +68,114 @@ esp_err_t OLEDDisplay::initialize_display() {
         return probe_result;
     }
 
-    // Inicializar display usando U8G2
-    u8g2_InitDisplay(&u8g2_display_);
-    u8g2_SetPowerSave(&u8g2_display_, 0); // Desligar power save
-    u8g2_ClearBuffer(&u8g2_display_);
+    // Enviar sequência de inicialização
+    esp_err_t init_result = send_command_sequence(INIT_COMMANDS, sizeof(INIT_COMMANDS));
+    if (init_result != ESP_OK) {
+        ESP_LOGE(TAG, "Falha na inicialização do display OLED");
+        return init_result;
+    }
 
-    // Configurar parâmetros do display
-    u8g2_SetContrast(&u8g2_display_, 200);
-    u8g2_SetFontMode(&u8g2_display_, 1); // Transparente
+    // Limpar display
+    clear_display();
 
     display_initialized_ = true;
-    
-    // Mostrar tela de inicialização
-    display_welcome_screen();
-    
     ESP_LOGI(TAG, "Display OLED inicializado com sucesso");
     return ESP_OK;
 }
 
 void OLEDDisplay::clear_display() {
     if (!display_initialized_) return;
+
+    // Limpar toda a memória do display (128x64 pixels = 1024 bytes)
+    uint8_t zero_buffer[128] = {0};
     
-    u8g2_ClearBuffer(&u8g2_display_);
-    u8g2_SendBuffer(&u8g2_display_);
+    for (uint8_t page = 0; page < 8; page++) {
+        // Configurar endereço de página
+        send_command(0xB0 + page); // Set page address
+        send_command(0x00);        // Set lower column address
+        send_command(0x10);        // Set higher column address
+        
+        // Enviar 128 bytes de zeros para esta página
+        send_data(zero_buffer, 128);
+    }
+}
+
+void OLEDDisplay::draw_text(uint8_t x, uint8_t y, const char* text) {
+    if (!display_initialized_ || text == nullptr) return;
+
+    // Implementação básica de texto - apenas para demonstração
+    // Em uma implementação real, precisaríamos de uma fonte
+    ESP_LOGI(TAG, "Texto no display [%d,%d]: %s", x, y, text);
+}
+
+void OLEDDisplay::draw_horizontal_line(uint8_t x, uint8_t y, uint8_t length) {
+    if (!display_initialized_) return;
+
+    // Implementação básica de linha horizontal
+    // Configurar posição
+    send_command(0xB0 + (y / 8)); // Page address
+    send_command(0x00 + (x & 0x0F)); // Lower column address
+    send_command(0x10 + ((x >> 4) & 0x0F)); // Higher column address
+    
+    // Desenhar linha (cada bit representa um pixel)
+    uint8_t line_data[128];
+    memset(line_data, 0xFF, length); // Todos os pixels ligados
+    send_data(line_data, length);
 }
 
 void OLEDDisplay::display_welcome_screen() {
     if (!display_initialized_) return;
 
-    u8g2_ClearBuffer(&u8g2_display_);
+    clear_display();
     
-    // Título principal
-    u8g2_SetFont(&u8g2_display_, u8g2_font_7x14B_tf);
-    u8g2_DrawStr(&u8g2_display_, 20, 8, "MEDIDOR");
-    u8g2_DrawStr(&u8g2_display_, 25, 23, "PRESSAO");
+    // Tela de boas-vindas simples
+    // Usar comandos básicos para mostrar algo
+    ESP_LOGI(TAG, "Exibindo tela de boas-vindas no OLED");
     
-    // Linha divisória
-    u8g2_DrawHLine(&u8g2_display_, 10, 35, 108);
+    // Desenhar borda
+    draw_horizontal_line(0, 0, 128);
+    draw_horizontal_line(0, 63, 128);
     
-    // Informações do sistema
-    u8g2_SetFont(&u8g2_display_, u8g2_font_5x8_tf);
-    u8g2_DrawStr(&u8g2_display_, 15, 45, "ESP32 + BMP280");
-    u8g2_DrawStr(&u8g2_display_, 25, 55, "SMP3011 + OLED");
-    
-    u8g2_SendBuffer(&u8g2_display_);
+    // Mostrar via serial que o display está funcionando
+    ESP_LOGI("OLED", "=== MEDIDOR DE PRESSAO ===");
+    ESP_LOGI("OLED", "Sistema Inicializado");
+    ESP_LOGI("OLED", "Aguardando sensores...");
 }
 
 void OLEDDisplay::display_system_status(const char* status_message) {
     if (!display_initialized_) return;
-
-    u8g2_ClearBuffer(&u8g2_display_);
     
-    u8g2_SetFont(&u8g2_display_, u8g2_font_7x14B_tf);
-    u8g2_DrawStr(&u8g2_display_, 35, 10, "STATUS");
-    
-    u8g2_SetFont(&u8g2_display_, u8g2_font_6x10_tf);
-    u8g2_DrawStr(&u8g2_display_, 10, 35, status_message);
-    
-    u8g2_SendBuffer(&u8g2_display_);
+    ESP_LOGI("OLED", "Status: %s", status_message);
 }
 
 void OLEDDisplay::display_sensor_readings(float temperature_celsius, float atmospheric_pressure_hpa, float tire_pressure_kpa) {
     if (!display_initialized_) return;
-
-    char display_buffer[32];
     
-    u8g2_ClearBuffer(&u8g2_display_);
+    char buffer[64];
     
-    // Cabeçalho
-    u8g2_SetFont(&u8g2_display_, u8g2_font_7x14B_tf);
-    u8g2_DrawStr(&u8g2_display_, 35, 0, "LEITURAS");
+    // Limpar área de dados (mantendo bordas)
+    clear_display();
+    draw_horizontal_line(0, 0, 128);
+    draw_horizontal_line(0, 63, 128);
     
-    // Linha divisória
-    u8g2_DrawHLine(&u8g2_display_, 5, 15, 118);
+    // Mostrar dados via serial (enquanto não implementamos texto gráfico)
+    snprintf(buffer, sizeof(buffer), "Temp: %.1f C", temperature_celsius);
+    ESP_LOGI("OLED", "%s", buffer);
     
-    u8g2_SetFont(&u8g2_display_, u8g2_font_6x10_tf);
+    snprintf(buffer, sizeof(buffer), "Atm: %.1f hPa", atmospheric_pressure_hpa);
+    ESP_LOGI("OLED", "%s", buffer);
     
-    // Temperatura
-    snprintf(display_buffer, sizeof(display_buffer), "Temp: %.1f C", temperature_celsius);
-    u8g2_DrawStr(&u8g2_display_, 5, 20, display_buffer);
-    
-    // Pressão atmosférica
-    snprintf(display_buffer, sizeof(display_buffer), "Atm: %.1f hPa", atmospheric_pressure_hpa);
-    u8g2_DrawStr(&u8g2_display_, 5, 32, display_buffer);
-    
-    // Pressão do pneu em bar
     float tire_pressure_bar = tire_pressure_kpa / 100.0f;
-    snprintf(display_buffer, sizeof(display_buffer), "Pneu: %.2f bar", tire_pressure_bar);
-    u8g2_DrawStr(&u8g2_display_, 5, 44, display_buffer);
+    snprintf(buffer, sizeof(buffer), "Pneu: %.2f bar", tire_pressure_bar);
+    ESP_LOGI("OLED", "%s", buffer);
     
-    // Pressão do pneu em PSI
     float tire_pressure_psi = tire_pressure_kpa * 0.145038f;
-    snprintf(display_buffer, sizeof(display_buffer), "Pneu: %.1f PSI", tire_pressure_psi);
-    u8g2_DrawStr(&u8g2_display_, 5, 56, display_buffer);
-    
-    u8g2_SendBuffer(&u8g2_display_);
+    snprintf(buffer, sizeof(buffer), "Pneu: %.1f PSI", tire_pressure_psi);
+    ESP_LOGI("OLED", "%s", buffer);
 }
 
 void OLEDDisplay::display_error_message(const char* error_message) {
     if (!display_initialized_) return;
-
-    u8g2_ClearBuffer(&u8g2_display_);
     
-    u8g2_SetFont(&u8g2_display_, u8g2_font_7x14B_tf);
-    u8g2_DrawStr(&u8g2_display_, 40, 5, "ERRO");
-    
-    u8g2_SetFont(&u8g2_display_, u8g2_font_5x8_tf);
-    
-    // Quebrar mensagem longa em múltiplas linhas
-    char buffer[64];
-    strncpy(buffer, error_message, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
-    
-    char* token = strtok(buffer, " ");
-    uint8_t line_position = 25;
-    char line_buffer[21] = ""; // 20 caracteres por linha
-    
-    while (token != NULL && line_position < 60) {
-        if (strlen(line_buffer) + strlen(token) + 1 < sizeof(line_buffer)) {
-            if (line_buffer[0] != '\0') strcat(line_buffer, " ");
-            strcat(line_buffer, token);
-        } else {
-            u8g2_DrawStr(&u8g2_display_, 5, line_position, line_buffer);
-            line_position += 10;
-            strcpy(line_buffer, token);
-        }
-        token = strtok(NULL, " ");
-    }
-    
-    if (line_buffer[0] != '\0') {
-        u8g2_DrawStr(&u8g2_display_, 5, line_position, line_buffer);
-    }
-    
-    u8g2_SendBuffer(&u8g2_display_);
-}
-
-void OLEDDisplay::update_display_brightness(uint8_t brightness_level) {
-    if (!display_initialized_) return;
-    
-    if (brightness_level > 255) brightness_level = 255;
-    u8g2_SetContrast(&u8g2_display_, brightness_level);
-}
-
-// Callbacks para U8G2
-uint8_t OLEDDisplay::i2c_byte_callback(u8x8_t* u8x8_handle, uint8_t msg, uint8_t arg_int, void* arg_ptr) {
-    //OLEDDisplay* display_instance = (OLEDDisplay*)u8x8_GetUserPtr(u8x8_handle);
-    OLEDDisplay* display_instance = (OLEDDisplay*)arg_ptr;
-    
-    switch (msg) {
-        case U8X8_MSG_BYTE_SEND: {
-            // Enviar múltiplos bytes de dados
-            uint8_t* data = (uint8_t*)arg_ptr;
-            for (uint8_t i = 0; i < arg_int; i++) {
-                // Para SSD1306, enviamos dados para registro 0x40
-                display_instance->i2c_manager_->write_register(
-                    display_instance->device_address_, 0x40, data[i]);
-            }
-            break;
-        }
-            
-        case U8X8_MSG_BYTE_INIT:
-            // Inicialização - já feita no I2CManager
-            break;
-            
-        case U8X8_MSG_BYTE_SET_DC:
-            // Para I2C, o bit DC é enviado como parte do endereço
-            // 0x00 = comando, 0x40 = dados
-            break;
-            
-        case U8X8_MSG_BYTE_START_TRANSFER:
-            // Início da transferência - enviar byte de controle
-            // arg_int contém o byte de controle (0x00 para comando, 0x40 para dados)
-            display_instance->i2c_manager_->write_register(
-                display_instance->device_address_, 0x00, arg_int);
-            break;
-            
-        case U8X8_MSG_BYTE_END_TRANSFER:
-            // Fim da transferência - nada a fazer
-            break;
-    }
-    
-    return 1;
-}
-
-uint8_t OLEDDisplay::gpio_delay_callback(u8x8_t* u8x8_handle, uint8_t msg, uint8_t arg_int, void* arg_ptr) {
-    switch (msg) {
-        case U8X8_MSG_GPIO_AND_DELAY_INIT:
-            // Inicialização - não necessária para I2C puro
-            break;
-            
-        case U8X8_MSG_DELAY_MILLI:
-            // Delay em milissegundos
-            vTaskDelay(pdMS_TO_TICKS(arg_int));
-            break;
-            
-        case U8X8_MSG_DELAY_10MICRO:
-            // Delay em microssegundos (aproximado)
-            esp_rom_delay_us(arg_int * 10);
-            break;
-            
-        case U8X8_MSG_DELAY_100NANO:
-            // Delay em nanossegundos (mínimo)
-            esp_rom_delay_us(1);
-            break;
-    }
-    
-    return 1;
+    ESP_LOGE("OLED", "ERRO: %s", error_message);
 }
