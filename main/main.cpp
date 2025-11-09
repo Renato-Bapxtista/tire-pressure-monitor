@@ -9,19 +9,31 @@
 #include "bmp280_driver.hpp"
 #include "smp3011_driver.hpp"
 #include "oled_display.hpp"
+#include "config.hpp"
 
-// Configurações de hardware com nomes descritivos
-constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_33;
-constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_32;
-constexpr uint8_t BMP280_I2C_ADDRESS = 0x76;
-constexpr uint8_t SMP3011_I2C_ADDRESS = 0x78;
-constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
+// Instâncias globais para DOIS barramentos I2C
+I2CManager i2c0_bus(I2C_NUM_0);  // Para display OLED
+I2CManager i2c1_bus(I2C_NUM_1);  // Para sensores
 
-// Instâncias globais
-I2CManager i2c_bus(I2C_NUM_1);
-BMP280Driver environmental_sensor(&i2c_bus, BMP280_I2C_ADDRESS);
-SMP3011Driver tire_pressure_sensor(&i2c_bus, SMP3011_I2C_ADDRESS);
-OLEDDisplay status_display(&i2c_bus, OLED_I2C_ADDRESS);
+OLEDDisplay status_display(&i2c0_bus, OLED_I2C_ADDRESS);
+BMP280Driver environmental_sensor(&i2c1_bus, BMP280_I2C_ADDRESS);
+SMP3011Driver tire_pressure_sensor(&i2c1_bus, SMP3011_I2C_ADDRESS);
+
+void scan_i2c_bus(I2CManager& i2c_bus, const char* bus_name) {
+    ESP_LOGI("SCAN", "Escaneando barramento %s...", bus_name);
+    uint8_t devices_found_count = 0;
+    
+    for (uint8_t device_address = 0x08; device_address <= 0x77; device_address++) {
+        if (i2c_bus.probe_device(device_address) == ESP_OK) {
+            ESP_LOGI("SCAN", "Dispositivo encontrado no barramento %s: 0x%02X", 
+                    bus_name, device_address);
+            devices_found_count++;
+        }
+    }
+    
+    ESP_LOGI("SCAN", "Scan %s completo. Dispositivos encontrados: %d", 
+            bus_name, devices_found_count);
+}
 
 extern "C" void app_main(void) {
     // Inicializar NVS
@@ -33,32 +45,42 @@ extern "C" void app_main(void) {
     ESP_ERROR_CHECK(initialization_result);
 
     ESP_LOGI("MAIN", "=== SISTEMA DE MEDIÇÃO DE PRESSÃO DE PNEUS ===");
+    ESP_LOGI("MAIN", "Configuração: 2 barramentos I2C separados");
 
-    // Inicializar barramento I2C
-    if (i2c_bus.initialize(I2C_SDA_PIN, I2C_SCL_PIN) == ESP_OK) {
-        ESP_LOGI("MAIN", "Barramento I2C inicializado com sucesso");
+    // Inicializar barramento I2C0 para display OLED
+    ESP_LOGI("MAIN", "Inicializando I2C0 (Display OLED) - SDA: GPIO%d, SCL: GPIO%d", 
+            I2C0_SDA_PIN, I2C0_SCL_PIN);
+    
+    if (i2c0_bus.initialize(I2C0_SDA_PIN, I2C0_SCL_PIN) == ESP_OK) {
+        ESP_LOGI("MAIN", "Barramento I2C0 (display) inicializado com sucesso");
         
-        // Testar scan de dispositivos I2C
-        ESP_LOGI("MAIN", "Escaneando dispositivos I2C...");
-        uint8_t devices_found_count = 0;
-        for (uint8_t device_address = 0x08; device_address <= 0x77; device_address++) {
-            if (i2c_bus.probe_device(device_address) == ESP_OK) {
-                ESP_LOGI("MAIN", "Dispositivo encontrado: 0x%02X", device_address);
-                devices_found_count++;
-            }
-        }
-        ESP_LOGI("MAIN", "Scan completo. Dispositivos encontrados: %d", devices_found_count);
-
+        // Scan I2C0 para display
+        scan_i2c_bus(i2c0_bus, "I2C0 (Display)");
+        
         // Inicializar display OLED
         if (status_display.initialize_display() == ESP_OK) {
             ESP_LOGI("MAIN", "Display OLED inicializado com sucesso");
+            status_display.display_welcome_screen();
         } else {
             ESP_LOGE("MAIN", "Falha na inicialização do display OLED");
-            status_display.display_error_message("Erro: Display não encontrado");
+            // Continuar sem display
         }
+    } else {
+        ESP_LOGE("MAIN", "Falha crítica na inicialização do barramento I2C0 (display)");
+    }
 
-        // Aguardar um pouco para mostrar tela de boas-vindas
-        vTaskDelay(pdMS_TO_TICKS(2000));
+    // Aguardar um pouco para mostrar tela de boas-vindas
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    // Inicializar barramento I2C1 para sensores
+    ESP_LOGI("MAIN", "Inicializando I2C1 (Sensores) - SDA: GPIO%d, SCL: GPIO%d", 
+            I2C1_SDA_PIN, I2C1_SCL_PIN);
+    
+    if (i2c1_bus.initialize(I2C1_SDA_PIN, I2C1_SCL_PIN) == ESP_OK) {
+        ESP_LOGI("MAIN", "Barramento I2C1 (sensores) inicializado com sucesso");
+        
+        // Scan I2C1 para sensores
+        scan_i2c_bus(i2c1_bus, "I2C1 (Sensores)");
 
         // Inicializar sensor ambiental BMP280
         bool environmental_sensor_ready = false;
@@ -162,14 +184,15 @@ extern "C" void app_main(void) {
             }
 
             ESP_LOGI("MAIN", "Aguardando próxima leitura...");
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(SENSOR_READ_INTERVAL_MS));
         }
     } else {
-        ESP_LOGE("MAIN", "Falha crítica na inicialização do barramento I2C");
+        ESP_LOGE("MAIN", "Falha crítica na inicialização do barramento I2C1 (sensores)");
+        status_display.display_error_message("Falha I2C Sensores");
         
         // Estado de fallback
         while (true) {
-            ESP_LOGW("MAIN", "Sistema em estado de recuperação - Verificar hardware I2C");
+            ESP_LOGW("MAIN", "Sistema em estado de recuperação - Verificar hardware I2C1");
             vTaskDelay(pdMS_TO_TICKS(10000));
         }
     }
