@@ -1,0 +1,7 @@
+dependencies:
+  u8g2:
+    path: ../u8g2
+    require: private
+  i2c_manager: 
+    path: ../i2c_manager
+    require: private

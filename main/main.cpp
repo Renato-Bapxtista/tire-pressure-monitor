@@ -8,17 +8,20 @@
 #include "i2c_manager.hpp"
 #include "bmp280_driver.hpp"
 #include "smp3011_driver.hpp"
+#include "oled_display.hpp"
 
 // Configurações de hardware com nomes descritivos
 constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_33;
 constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_32;
 constexpr uint8_t BMP280_I2C_ADDRESS = 0x76;
 constexpr uint8_t SMP3011_I2C_ADDRESS = 0x78;
+constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
 
 // Instâncias globais
 I2CManager i2c_bus(I2C_NUM_1);
 BMP280Driver environmental_sensor(&i2c_bus, BMP280_I2C_ADDRESS);
 SMP3011Driver tire_pressure_sensor(&i2c_bus, SMP3011_I2C_ADDRESS);
+OLEDDisplay status_display(&i2c_bus, OLED_I2C_ADDRESS);
 
 extern "C" void app_main(void) {
     // Inicializar NVS
@@ -46,35 +49,60 @@ extern "C" void app_main(void) {
         }
         ESP_LOGI("MAIN", "Scan completo. Dispositivos encontrados: %d", devices_found_count);
 
+        // Inicializar display OLED
+        if (status_display.initialize_display() == ESP_OK) {
+            ESP_LOGI("MAIN", "Display OLED inicializado com sucesso");
+        } else {
+            ESP_LOGE("MAIN", "Falha na inicialização do display OLED");
+            status_display.display_error_message("Erro: Display não encontrado");
+        }
+
+        // Aguardar um pouco para mostrar tela de boas-vindas
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
         // Inicializar sensor ambiental BMP280
+        bool environmental_sensor_ready = false;
         if (environmental_sensor.initialize_sensor() == ESP_OK) {
             ESP_LOGI("MAIN", "Sensor ambiental BMP280 inicializado com sucesso");
+            environmental_sensor_ready = true;
         } else {
             ESP_LOGE("MAIN", "Falha na inicialização do sensor ambiental BMP280");
+            status_display.display_error_message("Erro: Sensor BMP280 falhou");
         }
 
         // Inicializar sensor de pressão de pneu SMP3011
+        bool tire_sensor_ready = false;
         if (tire_pressure_sensor.initialize_sensor() == ESP_OK) {
             ESP_LOGI("MAIN", "Sensor de pressão SMP3011 inicializado com sucesso");
+            tire_sensor_ready = true;
         } else {
             ESP_LOGE("MAIN", "Falha na inicialização do sensor de pressão SMP3011");
+            status_display.display_error_message("Erro: Sensor SMP3011 falhou");
         }
 
-        // Verificar se ambos os sensores estão operacionais
-        bool environmental_sensor_ready = environmental_sensor.is_sensor_initialized();
-        bool tire_sensor_ready = tire_pressure_sensor.is_sensor_initialized();
-        
-        ESP_LOGI("MAIN", "Status dos sensores - Ambiental: %s, Pneu: %s",
-                environmental_sensor_ready ? "PRONTO" : "FALHA",
-                tire_sensor_ready ? "PRONTO" : "FALHA");
+        // Mostrar status dos sensores no display
+        if (environmental_sensor_ready && tire_sensor_ready) {
+            status_display.display_system_status("Sensores OK");
+        } else if (environmental_sensor_ready) {
+            status_display.display_system_status("Aguardando SMP3011");
+        } else if (tire_sensor_ready) {
+            status_display.display_system_status("Aguardando BMP280");
+        } else {
+            status_display.display_error_message("Todos sensores falharam");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
 
         // Loop principal de leituras
         uint32_t reading_counter = 0;
         while (true) {
-            float current_temperature_celsius;
-            float current_atmospheric_pressure_hectopascal;
-            float current_tire_pressure_kilopascal;
+            float current_temperature_celsius = 0.0f;
+            float current_atmospheric_pressure_hectopascal = 0.0f;
+            float current_tire_pressure_kilopascal = 0.0f;
             
+            bool environmental_read_success = false;
+            bool tire_read_success = false;
+
             ESP_LOGI("MAIN", "--- Leitura #%d ---", ++reading_counter);
 
             // Ler dados do sensor ambiental
@@ -83,6 +111,7 @@ extern "C" void app_main(void) {
                     &current_temperature_celsius, &current_atmospheric_pressure_hectopascal);
                 
                 if (environmental_read_result == ESP_OK) {
+                    environmental_read_success = true;
                     ESP_LOGI("AMBIENTE", "Temperatura: %.2f°C, Pressão Atmosférica: %.2f hPa", 
                             current_temperature_celsius, current_atmospheric_pressure_hectopascal);
                 } else {
@@ -95,6 +124,8 @@ extern "C" void app_main(void) {
                 esp_err_t tire_read_result = tire_pressure_sensor.read_pressure(&current_tire_pressure_kilopascal);
                 
                 if (tire_read_result == ESP_OK) {
+                    tire_read_success = true;
+                    
                     // Converter kPa para bar e PSI para referência
                     float tire_pressure_bar = current_tire_pressure_kilopascal / 100.0f;
                     float tire_pressure_psi = current_tire_pressure_kilopascal * 0.145038f;
@@ -106,8 +137,23 @@ extern "C" void app_main(void) {
                 }
             }
 
+            // Atualizar display com as leituras
+            if (environmental_read_success && tire_read_success) {
+                status_display.display_sensor_readings(
+                    current_temperature_celsius,
+                    current_atmospheric_pressure_hectopascal,
+                    current_tire_pressure_kilopascal
+                );
+            } else if (!environmental_read_success && !tire_read_success) {
+                status_display.display_error_message("Falha em ambos sensores");
+            } else if (!environmental_read_success) {
+                status_display.display_error_message("Falha no BMP280");
+            } else if (!tire_read_success) {
+                status_display.display_error_message("Falha no SMP3011");
+            }
+
             // Calcular pressão relativa se ambos sensores estão funcionando
-            if (environmental_sensor_ready && tire_sensor_ready) {
+            if (environmental_read_success && tire_read_success) {
                 float atmospheric_pressure_bar = current_atmospheric_pressure_hectopascal / 1000.0f;
                 float tire_pressure_bar = current_tire_pressure_kilopascal / 100.0f;
                 float relative_pressure_bar = tire_pressure_bar - atmospheric_pressure_bar;
@@ -116,7 +162,7 @@ extern "C" void app_main(void) {
             }
 
             ESP_LOGI("MAIN", "Aguardando próxima leitura...");
-            vTaskDelay(pdMS_TO_TICKS(3000));
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
     } else {
         ESP_LOGE("MAIN", "Falha crítica na inicialização do barramento I2C");
