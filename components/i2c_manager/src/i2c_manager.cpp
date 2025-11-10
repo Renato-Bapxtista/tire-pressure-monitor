@@ -21,6 +21,7 @@ esp_err_t I2CManager::initialize(gpio_num_t sda, gpio_num_t scl, uint32_t clk_sp
         .master = {
             .clk_speed = clk_speed,
         },
+        .clk_flags = 0,
     };
 
     esp_err_t ret = i2c_param_config(port_, &conf);
