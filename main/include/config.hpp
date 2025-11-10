@@ -40,3 +40,20 @@ constexpr uint32_t SENSOR_READ_INTERVAL_MS = 2000;
 
 
 
+// Sistema de identificação de veículos
+enum class VehicleType {
+    CAR,           // Carro de passeio
+    MOTORCYCLE,    // Moto
+    BICYCLE,       // Bicicleta
+    TRUCK,         // Caminhão
+    UNKNOWN        // Não identificado
+};
+
+// Pressões recomendadas por tipo de veículo (em kPa)
+constexpr float RECOMMENDED_PRESSURE_CAR = 220.0f;        // ~32 PSI
+constexpr float RECOMMENDED_PRESSURE_MOTORCYCLE = 250.0f; // ~36 PSI  
+constexpr float RECOMMENDED_PRESSURE_BICYCLE = 350.0f;    // ~50 PSI
+constexpr float RECOMMENDED_PRESSURE_TRUCK = 690.0f;      // ~100 PSI
+
+// Tolerância para sugestão de calibração (±10%)
+constexpr float PRESSURE_TOLERANCE_PERCENT = 0.10f;
