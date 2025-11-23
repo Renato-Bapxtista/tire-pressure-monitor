@@ -28,18 +28,33 @@ Este projeto implementa um sistema de aferição de pressão de pneus (TPMS - Ti
 ## Estrutura do Projeto
 
 ```
-esp32_tpms/
-├── main/
-│   ├── main.cpp             # Ponto de entrada do FreeRTOS e inicialização
+Tire-pressure-monitor/
 │   ├── components/
-│   │   ├── hardware/        # Drivers de baixo nível (I2C, GPIO, Sensores)
-│   │   │   ├── i2c_manager.*
-│   │   │   ├── button_manager.*
-│   │   │   └── sensor_manager.* (Simulação de leitura com FreeRTOS Task e Mutex)
-│   │   ├── gui/             # Camada LVGL (Interface Gráfica)
-│   │   │   └── gui_manager.* (Inicialização do LVGL e criação da tela principal)
-│   │   └── core/            # Lógica de negócio (Máquina de Estados, Tarefas FreeRTOS)
-│   │       └── tpms_core.* (Coordenação de dados, eventos de botão e atualização da GUI)
+│   │   ├── bmp280_driver/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├── button_drive/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├── i2c_maneger/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├── oled_display/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├──smp3011_driver/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├── sistem_controller/
+|   |   |    ├── include/
+|   |   |    ├── src/
+|   |   ├── task_maneger/
+|   |   |    ├── include/
+|   |   |    ├── src/
+├── main/
+|   ├── include/
+│   ├── main.cpp             # Ponto de entrada do FreeRTOS e inicialização
+|   
 ├── CMakeLists.txt
 ├── README.md
 ├── sdkconfig.defaults       # Configurações padrão do ESP-IDF (LVGL, C++, I2C)
