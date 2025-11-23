@@ -62,19 +62,21 @@ Tire-pressure-monitor/
 
 ## Resumo da Implementação
 
-O sistema foi estruturado em C++ com o padrão **Singleton** para gerenciar as camadas de Hardware, GUI e Core, facilitando o acesso global e a inicialização única.
+A arquitetura do sistema foi simplificada e centralizada em um **Controlador de Sistema** (`SystemController`), que orquestra as operações de hardware e a lógica de negócio.
 
-1.  **Hardware (FreeRTOS e Semáforos):**
-    *   `I2CManager`: Configura o I2C1 para os sensores.
-    *   `ButtonManager`: Configura os GPIOs dos botões com **ISR** (Interrupt Service Routine) e envia eventos para uma **FreeRTOS Queue**, desacoplando a interrupção do processamento da lógica.
-    *   `SensorManager`: Contém uma **FreeRTOS Task** (`sensor_read_task`) que lê os sensores a cada 200ms (5 leituras/segundo). Os dados são protegidos por um **FreeRTOS Mutex** (`current_data.mutex`) para garantir a segurança no acesso concorrente.
+1.  **Inicialização Centralizada:**
+    *   O `main.cpp` inicializa dois barramentos I2C (`i2c0_bus` e `i2c1_bus`) e todas as instâncias de hardware (Display, Sensores, Botões) como objetos globais.
+    *   O `SystemController` é instanciado e recebe referências para todos os drivers de hardware, estabelecendo a comunicação entre as camadas.
 
-2.  **GUI (LVGL):**
-    *   `GUIManager`: Inicializa o LVGL e o driver SSD1306 (via I2C0, configurado no `sdkconfig.defaults`). Possui uma **FreeRTOS Task** (`gui_task`) para o `lv_timer_handler`. A tela principal exibe a pressão (grande) e a temperatura (pequena).
+2.  **Loop de Execução Único (Single-Task):**
+    *   Ao contrário de uma arquitetura multi-task distribuída, o sistema opera em um **loop principal de alta frequência (20Hz)** dentro da task principal do FreeRTOS (`app_main`).
+    *   A cada iteração, o loop chama o método `system_controller.process_events()`.
 
-3.  **Core (Lógica de Negócio):**
-    *   `TPMSCore`: Possui duas **FreeRTOS Tasks**:
-        *   `data_processing_task`: Lê os dados do `SensorManager`, realiza a conversão de unidades (bar/psi) e atualiza a GUI, garantindo a latência de atualização.
-        *   `button_event_task`: Espera por eventos na fila do `ButtonManager`. O botão `Confirm/Mode` alterna a unidade de exibição (bar/psi).
+3.  **Orquestração pelo `SystemController`:**
+    *   O `SystemController` é responsável por:
+        *   **Leitura de Sensores:** Acionar a leitura dos sensores BMP280 e SMP3011.
+        *   **Processamento de Dados:** Realizar a compensação de pressão (usando o BMP280) e a conversão de unidades (bar/psi).
+        *   **Gerenciamento de Eventos:** Verificar o estado dos botões e aplicar as mudanças de modo ou unidade.
+        *   **Atualização da GUI:** Enviar os dados processados para o `OLEDDisplay` para atualização da interface gráfica via LVGL.
 
-Esta estrutura modular em C++ e o uso adequado de recursos do FreeRTOS (Tasks, Queues, Mutexes) atendem a todos os requisitos técnicos solicitados.
+Esta nova estrutura, baseada em um loop de controle centralizado, simplifica a sincronização e o gerenciamento de recursos, mantendo a modularidade através dos drivers em C++.
